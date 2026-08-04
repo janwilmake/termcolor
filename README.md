@@ -4,6 +4,8 @@ Give every macOS Terminal tab its own background color — automatically, keyed 
 
 Working in five checkouts of the same repo? Each one gets its own stable color, so you can tell your terminals apart at a glance. `cd` somewhere else and the tab recolors instantly.
 
+![termcolor recoloring a Terminal tab on every cd](demo.gif)
+
 - **Same folder → same color.** Colors come from a hash of the directory path, so they're stable across tabs, restarts, and days.
 - **Git-aware.** Inside a repo the color is keyed to the repo root, so moving around subdirectories never changes it.
 - **Live.** A `chpwd` hook recolors the tab on every `cd`, in the background — zero prompt latency.
