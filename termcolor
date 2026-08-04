@@ -1,0 +1,149 @@
+#!/bin/zsh
+# termcolor — recolor the current macOS Terminal.app tab
+#
+# usage:
+#   termcolor <preset>      apply a named preset (see: termcolor list)
+#   termcolor R G B         custom background, 0-255 per channel
+#   termcolor auto [dir]    deterministic color from dir (default $PWD);
+#                           inside a git repo, keyed on the repo root.
+#                           ~/.config/termcolor/overrides pins exact colors:
+#                           one "<path> <R> <G> <B>" (0-255) per line
+#   termcolor random        random dark background
+#   termcolor reset         restore the tab's profile colors
+
+set -e
+
+if [[ "$TERM_PROGRAM" != "Apple_Terminal" ]]; then
+  echo "termcolor: only works inside macOS Terminal.app" >&2
+  exit 1
+fi
+
+typeset -A presets
+presets=(
+  midnight  "10 15 35"
+  ocean     "5 25 45"
+  forest    "8 28 18"
+  wine      "35 8 18"
+  plum      "28 12 38"
+  ember     "38 18 5"
+  slate     "22 24 28"
+  black     "0 0 0"
+)
+
+require_tty() {
+  # TERMCOLOR_TTY lets you target another tab (zsh overwrites $TTY at startup)
+  tty_dev=${TERMCOLOR_TTY:-${TTY:-$(tty 2>/dev/null || true)}}
+  if [[ "$tty_dev" != /dev/tty* ]]; then
+    echo "termcolor: cannot determine this session's tty" >&2
+    exit 1
+  fi
+}
+
+find_tab_and_reset() {
+  osascript - "$tty_dev" <<'EOF'
+on run argv
+  set ttyDev to item 1 of argv
+  tell application "Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if tty of t is ttyDev then
+          -- reapplying the tab's own profile wipes any color override
+          set current settings of t to (first settings set whose name is (name of current settings of t))
+          return
+        end if
+      end repeat
+    end repeat
+  end tell
+end run
+EOF
+}
+
+find_tab_and_color() {
+  osascript - "$tty_dev" "$1" "$2" "$3" <<'EOF'
+on run argv
+  set ttyDev to item 1 of argv
+  set r to (item 2 of argv) as integer
+  set g to (item 3 of argv) as integer
+  set b to (item 4 of argv) as integer
+  tell application "Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if tty of t is ttyDev then
+          set background color of t to {r, g, b}
+          return
+        end if
+      end repeat
+    end repeat
+  end tell
+end run
+EOF
+}
+
+case "$1" in
+  ""|-h|--help)
+    echo "usage: termcolor <preset> | R G B (0-255) | auto [dir] | random | reset | list"
+    exit 0
+    ;;
+  auto)
+    dir="${2:-$PWD}"
+    key=$(command git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || key="${dir:A}"
+    # pinned colors take precedence: lines of "<path> <R> <G> <B>" (0-255)
+    ovr="${XDG_CONFIG_HOME:-$HOME/.config}/termcolor/overrides"
+    if [[ -f "$ovr" ]]; then
+      while read -r opath orr ogg obb; do
+        [[ -z "$opath" || "$opath" == \#* ]] && continue
+        opath="${opath/#\~/$HOME}"
+        if [[ "$key" == "$opath" ]]; then
+          r=$orr; g=$ogg; b=$obb
+          break
+        fi
+      done < "$ovr"
+    fi
+    if [[ -n "${r:-}" ]]; then
+      : # override matched
+    else
+    # stable hash of the key → hue (0-359), then a dark HSV→RGB ramp
+    crc=$(print -rn -- "$key" | cksum | awk '{print $1}')
+    hue=$(( crc % 360 ))
+    sector=$(( hue / 60 )); f=$(( hue % 60 ))
+    up=$(( 12 + 33 * f / 60 )); down=$(( 45 - 33 * f / 60 ))
+    case $sector in
+      0) r=45;    g=$up;   b=12 ;;
+      1) r=$down; g=45;    b=12 ;;
+      2) r=12;    g=45;    b=$up ;;
+      3) r=12;    g=$down; b=45 ;;
+      4) r=$up;   g=12;    b=45 ;;
+      5) r=45;    g=12;    b=$down ;;
+    esac
+    fi
+    ;;
+  list)
+    for name in ${(ok)presets}; do
+      printf "  %-10s %s\n" "$name" "${presets[$name]}"
+    done
+    exit 0
+    ;;
+  reset)
+    require_tty
+    find_tab_and_reset
+    exit 0
+    ;;
+  random)
+    # capped at 45 so the background stays dark enough for light text
+    r=$((RANDOM % 45)); g=$((RANDOM % 45)); b=$((RANDOM % 45))
+    ;;
+  *)
+    if [[ -n "${presets[$1]}" ]]; then
+      read -r r g b <<< "${presets[$1]}"
+    elif [[ $# -eq 3 ]]; then
+      r=$1; g=$2; b=$3
+    else
+      echo "termcolor: unknown preset '$1' (try: termcolor list)" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# Terminal.app uses 16-bit color channels: 255 * 257 = 65535
+require_tty
+find_tab_and_color $((r * 257)) $((g * 257)) $((b * 257))
