@@ -3,14 +3,18 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/janwilmake/termcolor/main/install.sh | sh
 #
-# Installs ~/.local/bin/termcolor and adds an auto-color hook to ~/.zshrc
-# (guarded by markers, safe to re-run).
+# Installs ~/.local/bin/termcolor, adds an auto-color hook to ~/.zshrc
+# (guarded by markers, safe to re-run), and loads a launch agent that
+# repaints your tabs when macOS switches between light and dark mode.
 
 set -e
 
 RAW="https://raw.githubusercontent.com/janwilmake/termcolor/main"
 BIN_DIR="$HOME/.local/bin"
 ZSHRC="$HOME/.zshrc"
+LABEL="io.github.janwilmake.termcolor"
+AGENT_DIR="$HOME/Library/LaunchAgents"
+PLIST="$AGENT_DIR/$LABEL.plist"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "termcolor only works on macOS (it scripts Terminal.app)." >&2
@@ -47,6 +51,36 @@ fi
 EOF
   echo "added auto-color hook to $ZSHRC"
 fi
+
+# Launch agent: waits for the system appearance notification, then repaints.
+mkdir -p "$AGENT_DIR"
+cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BIN_DIR/termcolor</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
+EOF
+
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null \
+  || launchctl load -w "$PLIST" 2>/dev/null \
+  || echo "could not load the launch agent; light/dark switching will lag" >&2
+echo "loaded launch agent $LABEL"
 
 echo
 echo "Done. Open a new Terminal tab (or run 'source ~/.zshrc') to see it."

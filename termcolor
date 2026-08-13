@@ -8,15 +8,24 @@
 #                           inside a git repo, keyed on the repo root.
 #                           ~/.config/termcolor/overrides pins exact colors:
 #                           one "<path> <R> <G> <B>" (0-255) per line
-#   termcolor random        random dark background
+#   termcolor random        random background
 #   termcolor reset         restore the tab's profile colors
+#   termcolor refresh       recolor every known tab for the current theme
+#   termcolor watch         wait for system theme changes and refresh (agent)
+#
+# Every color is stored as its dark-mode RGB. In light mode the same hue is
+# rendered pale, so the profile's black text stays readable.
 
 set -e
 
-if [[ "$TERM_PROGRAM" != "Apple_Terminal" ]]; then
-  echo "termcolor: only works inside macOS Terminal.app" >&2
-  exit 1
-fi
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/termcolor"
+
+# dark mode: deep, saturated. light mode: same hue, pale enough for black text.
+DARK_LO=12
+DARK_HI=45
+LIGHT_LO=190
+LIGHT_HI=245
+LIGHT_GRAY=238
 
 typeset -A presets
 presets=(
@@ -30,7 +39,78 @@ presets=(
   black     "0 0 0"
 )
 
+# --- theme -------------------------------------------------------------------
+
+theme_is_light() {
+  local style
+  style=$(defaults read -g AppleInterfaceStyle 2>/dev/null) || style=""
+  [[ "$style" != Dark* ]]
+}
+
+# --- color math --------------------------------------------------------------
+
+# ramp <hue 0-359> <lo> <hi> — one hue as RGB, with lo/hi as the channel bounds.
+# Sets ramp_r / ramp_g / ramp_b.
+ramp() {
+  local hue=$1 lo=$2 hi=$3 span sector f up down
+  span=$(( hi - lo ))
+  sector=$(( hue / 60 ))
+  f=$(( hue % 60 ))
+  up=$(( lo + span * f / 60 ))
+  down=$(( hi - span * f / 60 ))
+  case $sector in
+    0) ramp_r=$hi;   ramp_g=$up;   ramp_b=$lo ;;
+    1) ramp_r=$down; ramp_g=$hi;   ramp_b=$lo ;;
+    2) ramp_r=$lo;   ramp_g=$hi;   ramp_b=$up ;;
+    3) ramp_r=$lo;   ramp_g=$down; ramp_b=$hi ;;
+    4) ramp_r=$up;   ramp_g=$lo;   ramp_b=$hi ;;
+    5) ramp_r=$hi;   ramp_g=$lo;   ramp_b=$down ;;
+  esac
+}
+
+# hue_of <r> <g> <b> — prints the hue 0-359, or -1 when the color is a gray.
+hue_of() {
+  local r=$1 g=$2 b=$3 max min d
+  max=$r
+  if (( g > max )); then max=$g; fi
+  if (( b > max )); then max=$b; fi
+  min=$r
+  if (( g < min )); then min=$g; fi
+  if (( b < min )); then min=$b; fi
+  d=$(( max - min ))
+  if (( d == 0 )); then
+    print -- -1
+  elif (( max == r )); then
+    print -- $(( (60 * (g - b) / d + 360) % 360 ))
+  elif (( max == g )); then
+    print -- $(( 60 * (b - r) / d + 120 ))
+  else
+    print -- $(( 60 * (r - g) / d + 240 ))
+  fi
+}
+
+# render <r> <g> <b> — the stored dark color as it must look in the current
+# theme. Sets out_r / out_g / out_b.
+render() {
+  out_r=$1; out_g=$2; out_b=$3
+  theme_is_light || return 0
+  local hue
+  hue=$(hue_of $1 $2 $3)
+  if (( hue < 0 )); then
+    out_r=$LIGHT_GRAY; out_g=$LIGHT_GRAY; out_b=$LIGHT_GRAY
+    return 0
+  fi
+  ramp $hue $LIGHT_LO $LIGHT_HI
+  out_r=$ramp_r; out_g=$ramp_g; out_b=$ramp_b
+}
+
+# --- tab plumbing ------------------------------------------------------------
+
 require_tty() {
+  if [[ "$TERM_PROGRAM" != "Apple_Terminal" ]]; then
+    echo "termcolor: only works inside macOS Terminal.app" >&2
+    exit 1
+  fi
   # TERMCOLOR_TTY lets you target another tab (zsh overwrites $TTY at startup)
   tty_dev=${TERMCOLOR_TTY:-${TTY:-$(tty 2>/dev/null || true)}}
   if [[ "$tty_dev" != /dev/tty* ]]; then
@@ -58,26 +138,73 @@ end run
 EOF
 }
 
-find_tab_and_color() {
-  osascript - "$tty_dev" "$1" "$2" "$3" <<'EOF'
+# color_tabs <tty> <r> <g> <b> [<tty> <r> <g> <b> ...] — 0-255 per channel.
+# Prints the ttys it found, one per line.
+color_tabs() {
+  local -a args16
+  local i=1
+  while (( i <= $# )); do
+    args16+=("${@[i]}" $(( ${@[i+1]} * 257 )) $(( ${@[i+2]} * 257 )) $(( ${@[i+3]} * 257 )))
+    i=$(( i + 4 ))
+  done
+  # Terminal.app uses 16-bit color channels: 255 * 257 = 65535
+  osascript - "${args16[@]}" <<'EOF'
 on run argv
-  set ttyDev to item 1 of argv
-  set r to (item 2 of argv) as integer
-  set g to (item 3 of argv) as integer
-  set b to (item 4 of argv) as integer
+  -- plain "is running" never launches Terminal; a tell block would
+  if not (application "Terminal" is running) then return ""
+  set matched to {}
+  set n to count of argv
   tell application "Terminal"
     repeat with w in windows
       repeat with t in tabs of w
-        if tty of t is ttyDev then
-          set background color of t to {r, g, b}
-          return
-        end if
+        set td to tty of t
+        repeat with i from 1 to n by 4
+          if (item i of argv) is td then
+            set background color of t to {(item (i + 1) of argv) as integer, (item (i + 2) of argv) as integer, (item (i + 3) of argv) as integer}
+            set end of matched to td
+          end if
+        end repeat
       end repeat
     end repeat
   end tell
+  set AppleScript's text item delimiters to linefeed
+  return matched as text
 end run
 EOF
 }
+
+# apply <r> <g> <b> — remember the dark color for this tab, then paint it.
+apply() {
+  require_tty
+  mkdir -p "$STATE_DIR"
+  print -- "$1 $2 $3" > "$STATE_DIR/${tty_dev:t}"
+  render "$1" "$2" "$3"
+  color_tabs "$tty_dev" $out_r $out_g $out_b >/dev/null
+}
+
+# repaint every tab we have a record of, and forget the tabs that are gone.
+refresh() {
+  [[ -d "$STATE_DIR" ]] || return 0
+  local -a quads
+  local f dr dg db
+  for f in "$STATE_DIR"/*(N.); do
+    read -r dr dg db < "$f" || continue
+    [[ -n "$db" ]] || continue
+    render $dr $dg $db
+    quads+=("/dev/${f:t}" $out_r $out_g $out_b)
+  done
+  (( ${#quads} )) || return 0
+  local matched
+  # on an AppleScript error, keep every record rather than forget live tabs
+  matched=$(color_tabs "${quads[@]}") || return 0
+  for f in "$STATE_DIR"/*(N.); do
+    if ! print -r -- "$matched" | grep -qxF "/dev/${f:t}"; then
+      rm -f "$f"
+    fi
+  done
+}
+
+# --- commands ----------------------------------------------------------------
 
 case "$1" in
   ""|-h|--help)
@@ -99,22 +226,11 @@ case "$1" in
         fi
       done < "$ovr"
     fi
-    if [[ -n "${r:-}" ]]; then
-      : # override matched
-    else
-    # stable hash of the key → hue (0-359), then a dark HSV→RGB ramp
-    crc=$(print -rn -- "$key" | cksum | awk '{print $1}')
-    hue=$(( crc % 360 ))
-    sector=$(( hue / 60 )); f=$(( hue % 60 ))
-    up=$(( 12 + 33 * f / 60 )); down=$(( 45 - 33 * f / 60 ))
-    case $sector in
-      0) r=45;    g=$up;   b=12 ;;
-      1) r=$down; g=45;    b=12 ;;
-      2) r=12;    g=45;    b=$up ;;
-      3) r=12;    g=$down; b=45 ;;
-      4) r=$up;   g=12;    b=45 ;;
-      5) r=45;    g=12;    b=$down ;;
-    esac
+    if [[ -z "${r:-}" ]]; then
+      # stable hash of the key -> hue (0-359), then the theme's ramp
+      crc=$(print -rn -- "$key" | cksum | awk '{print $1}')
+      ramp $(( crc % 360 )) $DARK_LO $DARK_HI
+      r=$ramp_r; g=$ramp_g; b=$ramp_b
     fi
     ;;
   list)
@@ -125,12 +241,33 @@ case "$1" in
     ;;
   reset)
     require_tty
+    rm -f "$STATE_DIR/${tty_dev:t}"
     find_tab_and_reset
     exit 0
     ;;
+  refresh)
+    refresh
+    exit 0
+    ;;
+  watch)
+    # macOS broadcasts this notification the moment the appearance changes,
+    # so the tabs follow the system with no polling.
+    exec osascript -l JavaScript - "${0:A}" <<'EOF'
+function run(argv) {
+  ObjC.import('Cocoa');
+  ObjC.import('stdlib');
+  var bin = argv[0];
+  $.NSDistributedNotificationCenter.defaultCenter
+    .addObserverForNameObjectQueueUsingBlock(
+      $('AppleInterfaceThemeChangedNotification'), $(), $.NSOperationQueue.mainQueue,
+      function (n) { $.system("'" + bin + "' refresh >/dev/null 2>&1"); });
+  $.NSRunLoop.mainRunLoop.run;
+}
+EOF
+    ;;
   random)
-    # capped at 45 so the background stays dark enough for light text
-    r=$((RANDOM % 45)); g=$((RANDOM % 45)); b=$((RANDOM % 45))
+    ramp $((RANDOM % 360)) $DARK_LO $DARK_HI
+    r=$ramp_r; g=$ramp_g; b=$ramp_b
     ;;
   *)
     if [[ -n "${presets[$1]}" ]]; then
@@ -144,6 +281,4 @@ case "$1" in
     ;;
 esac
 
-# Terminal.app uses 16-bit color channels: 255 * 257 = 65535
-require_tty
-find_tab_and_color $((r * 257)) $((g * 257)) $((b * 257))
+apply $r $g $b
