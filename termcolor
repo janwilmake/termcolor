@@ -5,7 +5,8 @@
 #   termcolor <preset>      apply a named preset (see: termcolor list)
 #   termcolor R G B         custom background, 0-255 per channel
 #   termcolor auto [dir]    deterministic color from dir (default $PWD);
-#                           inside a git repo, keyed on the repo root.
+#                           always keyed on the directory itself, so each
+#                           subdirectory gets its own color.
 #                           ~/.config/termcolor/overrides pins exact colors:
 #                           one "<path> <R> <G> <B>" (0-255) per line
 #   termcolor random        random background
@@ -213,7 +214,7 @@ case "$1" in
     ;;
   auto)
     dir="${2:-$PWD}"
-    key=$(command git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || key="${dir:A}"
+    key="${dir:A}"
     # pinned colors take precedence: lines of "<path> <R> <G> <B>" (0-255)
     ovr="${XDG_CONFIG_HOME:-$HOME/.config}/termcolor/overrides"
     if [[ -f "$ovr" ]]; then

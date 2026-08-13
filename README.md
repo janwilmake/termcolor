@@ -7,7 +7,7 @@ Working in five checkouts of the same repo? Each one gets its own stable color, 
 ![four Terminal windows each cd-ing into a different project and taking on its color](demo.gif)
 
 - **Same folder → same color.** Colors come from a hash of the directory path, so they're stable across tabs, restarts, and days.
-- **Git-aware.** Inside a repo the color is keyed to the repo root, so moving around subdirectories never changes it.
+- **Per folder, always.** The key is the directory itself — never the repo root — so subdirectories of the same project each get their own color.
 - **Live.** A `chpwd` hook recolors the tab on every `cd`, in the background — zero prompt latency.
 - **Light and dark.** Every tab follows the system appearance the moment it changes: deep colors on dark, the same hue rendered pale on light, so black text stays readable. Nothing to configure.
 - **Pinnable.** Want `project-a` always green and `project-b` always red? Pin exact colors in an overrides file.
@@ -51,7 +51,7 @@ The switch is event-driven, not polled: macOS broadcasts `AppleInterfaceThemeCha
 
 ## Pinning colors per project
 
-Create `~/.config/termcolor/overrides` with one `<path> <R> <G> <B>` line per project (0–255, `~` allowed, `#` comments). The path must be what `auto` keys on: the git repo root, or the absolute directory for non-repos.
+Create `~/.config/termcolor/overrides` with one `<path> <R> <G> <B>` line per project (0–255, `~` allowed, `#` comments). The path must be what `auto` keys on: the absolute directory you `cd` into, matched exactly — a pin on a parent folder does not cover its subdirectories.
 
 ```
 # my checkouts, maximally distinct
