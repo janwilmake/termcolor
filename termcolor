@@ -9,6 +9,9 @@
 #                           subdirectory gets its own color.
 #                           ~/.config/termcolor/overrides pins exact colors:
 #                           one "<path> <R> <G> <B>" (0-255) per line
+#   termcolor hue <0-359>   an exact hue, rendered for the current theme.
+#                           For callers that want N distinguishable colors:
+#                           space the hues evenly instead of hashing.
 #   termcolor random        random background
 #   termcolor reset         restore the tab's profile colors
 #   termcolor refresh       recolor every known tab for the current theme
@@ -209,7 +212,7 @@ refresh() {
 
 case "$1" in
   ""|-h|--help)
-    echo "usage: termcolor <preset> | R G B (0-255) | auto [dir] | random | reset | list"
+    echo "usage: termcolor <preset> | R G B (0-255) | auto [dir] | hue 0-359 | random | reset | list"
     exit 0
     ;;
   auto)
@@ -265,6 +268,14 @@ function run(argv) {
   $.NSRunLoop.mainRunLoop.run;
 }
 EOF
+    ;;
+  hue)
+    if [[ "$2" != <-> ]] || (( $2 > 359 )); then
+      echo "termcolor: hue takes a number 0-359" >&2
+      exit 1
+    fi
+    ramp $2 $DARK_LO $DARK_HI
+    r=$ramp_r; g=$ramp_g; b=$ramp_b
     ;;
   random)
     ramp $((RANDOM % 360)) $DARK_LO $DARK_HI

@@ -34,12 +34,15 @@ termcolor list        # show named presets
 termcolor ocean       # apply a preset to this tab
 termcolor 40 10 30    # custom background, 0-255 per channel
 termcolor auto        # color from the current directory (what the hook runs)
+termcolor hue 210     # an exact hue on the wheel, rendered for this theme
 termcolor random      # random background
 termcolor reset       # restore the tab's profile colors
 termcolor refresh     # repaint every known tab for the current appearance
 ```
 
 Presets: `midnight`, `ocean`, `forest`, `wine`, `plum`, `ember`, `slate`, `black`. Only the background changes; the profile's own text color is left alone.
+
+`hue` is for scripts that open several windows at once and want them all telling apart. Hashing can't promise that — eight hashed paths will sometimes put two of them within a few degrees of each other — so space the hues yourself: window `i` of `n` gets `termcolor hue $(( i * 360 / n ))`. That's what [multiclaude](https://github.com/janwilmake/multiclaude) does for its agent windows.
 
 ## Light and dark mode
 
