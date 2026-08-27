@@ -18,7 +18,8 @@
 #   termcolor watch         wait for system theme changes and refresh (agent)
 #
 # Every color is stored as its dark-mode RGB. In light mode the same hue is
-# rendered pale, so the profile's black text stays readable.
+# rendered pale. The text color is painted to match the background, so it
+# stays readable whichever appearance the profile was built for.
 
 set -e
 
@@ -30,6 +31,11 @@ DARK_HI=45
 LIGHT_LO=190
 LIGHT_HI=245
 LIGHT_GRAY=238
+
+# text, painted alongside the background so the profile's own choice never
+# lands white-on-pale (or black-on-deep) when the appearance flips.
+LIGHT_TEXT=0
+DARK_TEXT=235
 
 typeset -A presets
 presets=(
@@ -94,10 +100,15 @@ hue_of() {
 }
 
 # render <r> <g> <b> — the stored dark color as it must look in the current
-# theme. Sets out_r / out_g / out_b.
+# theme, plus the text color that reads on it.
+# Sets out_r / out_g / out_b and out_tr / out_tg / out_tb.
 render() {
   out_r=$1; out_g=$2; out_b=$3
-  theme_is_light || return 0
+  if ! theme_is_light; then
+    out_tr=$DARK_TEXT; out_tg=$DARK_TEXT; out_tb=$DARK_TEXT
+    return 0
+  fi
+  out_tr=$LIGHT_TEXT; out_tg=$LIGHT_TEXT; out_tb=$LIGHT_TEXT
   local hue
   hue=$(hue_of $1 $2 $3)
   if (( hue < 0 )); then
@@ -142,14 +153,15 @@ end run
 EOF
 }
 
-# color_tabs <tty> <r> <g> <b> [<tty> <r> <g> <b> ...] — 0-255 per channel.
+# color_tabs <tty> <bg r g b> <text r g b> [...] — 0-255 per channel.
 # Prints the ttys it found, one per line.
 color_tabs() {
   local -a args16
-  local i=1
+  local i=1 c
   while (( i <= $# )); do
-    args16+=("${@[i]}" $(( ${@[i+1]} * 257 )) $(( ${@[i+2]} * 257 )) $(( ${@[i+3]} * 257 )))
-    i=$(( i + 4 ))
+    args16+=("${@[i]}")
+    for c in {1..6}; do args16+=($(( ${@[i+c]} * 257 ))); done
+    i=$(( i + 7 ))
   done
   # Terminal.app uses 16-bit color channels: 255 * 257 = 65535
   osascript - "${args16[@]}" <<'EOF'
@@ -162,9 +174,13 @@ on run argv
     repeat with w in windows
       repeat with t in tabs of w
         set td to tty of t
-        repeat with i from 1 to n by 4
+        repeat with i from 1 to n by 7
           if (item i of argv) is td then
             set background color of t to {(item (i + 1) of argv) as integer, (item (i + 2) of argv) as integer, (item (i + 3) of argv) as integer}
+            set textColor to {(item (i + 4) of argv) as integer, (item (i + 5) of argv) as integer, (item (i + 6) of argv) as integer}
+            set normal text color of t to textColor
+            set bold text color of t to textColor
+            set cursor color of t to textColor
             set end of matched to td
           end if
         end repeat
@@ -183,24 +199,24 @@ apply() {
   mkdir -p "$STATE_DIR"
   print -- "$1 $2 $3" > "$STATE_DIR/${tty_dev:t}"
   render "$1" "$2" "$3"
-  color_tabs "$tty_dev" $out_r $out_g $out_b >/dev/null
+  color_tabs "$tty_dev" $out_r $out_g $out_b $out_tr $out_tg $out_tb >/dev/null
 }
 
 # repaint every tab we have a record of, and forget the tabs that are gone.
 refresh() {
   [[ -d "$STATE_DIR" ]] || return 0
-  local -a quads
+  local -a paints
   local f dr dg db
   for f in "$STATE_DIR"/*(N.); do
     read -r dr dg db < "$f" || continue
     [[ -n "$db" ]] || continue
     render $dr $dg $db
-    quads+=("/dev/${f:t}" $out_r $out_g $out_b)
+    paints+=("/dev/${f:t}" $out_r $out_g $out_b $out_tr $out_tg $out_tb)
   done
-  (( ${#quads} )) || return 0
+  (( ${#paints} )) || return 0
   local matched
   # on an AppleScript error, keep every record rather than forget live tabs
-  matched=$(color_tabs "${quads[@]}") || return 0
+  matched=$(color_tabs "${paints[@]}") || return 0
   for f in "$STATE_DIR"/*(N.); do
     if ! print -r -- "$matched" | grep -qxF "/dev/${f:t}"; then
       rm -f "$f"

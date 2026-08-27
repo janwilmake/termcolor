@@ -9,7 +9,7 @@ Working in five checkouts of the same repo? Each one gets its own stable color, 
 - **Same folder → same color.** Colors come from a hash of the directory path, so they're stable across tabs, restarts, and days.
 - **Per folder, always.** The key is the directory itself — never the repo root — so subdirectories of the same project each get their own color.
 - **Live.** A `chpwd` hook recolors the tab on every `cd`, in the background — zero prompt latency.
-- **Light and dark.** Every tab follows the system appearance the moment it changes: deep colors on dark, the same hue rendered pale on light, so black text stays readable. Nothing to configure.
+- **Light and dark.** Every tab follows the system appearance the moment it changes: deep colors on dark, the same hue rendered pale on light — and the text is repainted with it, black on light and near-white on dark, so it reads whichever appearance your profile was built for. Nothing to configure.
 - **Pinnable.** Want `project-a` always green and `project-b` always red? Pin exact colors in an overrides file.
 - **Zero dependencies.** One zsh script driving Terminal.app over AppleScript. No brew, no polling.
 
@@ -40,15 +40,17 @@ termcolor reset       # restore the tab's profile colors
 termcolor refresh     # repaint every known tab for the current appearance
 ```
 
-Presets: `midnight`, `ocean`, `forest`, `wine`, `plum`, `ember`, `slate`, `black`. Only the background changes; the profile's own text color is left alone.
+Presets: `midnight`, `ocean`, `forest`, `wine`, `plum`, `ember`, `slate`, `black`. A preset names the background; the text, bold text, and cursor colors are painted to match it.
 
 `hue` is for scripts that open several windows at once and want them all telling apart. Hashing can't promise that — eight hashed paths will sometimes put two of them within a few degrees of each other — so space the hues yourself: window `i` of `n` gets `termcolor hue $(( i * 360 / n ))`. That's what [multiclaude](https://github.com/janwilmake/multiclaude) does for its agent windows.
 
 ## Light and dark mode
 
-Every color you give termcolor — a preset, an `R G B` triple, a pin in the overrides file — is the **dark-mode** color. In light mode termcolor keeps the hue and repaints it pale (channels ride between 190 and 245), which gives black text a contrast ratio above 10:1. A color with no hue at all, like `black`, becomes a light gray.
+Every color you give termcolor — a preset, an `R G B` triple, a pin in the overrides file — is the **dark-mode** color. In light mode termcolor keeps the hue and repaints it pale (channels ride between 190 and 245). A color with no hue at all, like `black`, becomes a light gray.
 
 So `wine` is a deep red on dark and a soft rose on light, and a pinned `10 42 14` is a deep green on dark and a mint green on light. Your terminals stay recognisable by color in both appearances, and you never configure a second palette.
+
+Text is painted along with the background: black in light mode, near-white (`235`) in dark. Terminal.app profiles carry their own text color, and a dark profile's white text is invisible on a pale background — so termcolor sets the normal text, bold text, and cursor colors itself rather than trusting the profile to suit both appearances. Black on the light ramp clears a 10:1 contrast ratio. `termcolor reset` reapplies the profile and hands all of it back. (The 16 ANSI colors are profile-wide and not scriptable per tab; if your prompt uses a dark ANSI blue it will still be dark on dark.)
 
 The switch is event-driven, not polled: macOS broadcasts `AppleInterfaceThemeChangedNotification` when the appearance changes, and the launch agent repaints every tab it knows about within a second. That covers the automatic sunrise/sunset switch too.
 
